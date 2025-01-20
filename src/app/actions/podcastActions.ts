@@ -1,11 +1,32 @@
 "use server";
 
-import { parse } from "node-html-parser";
 import Parser from "rss-parser";
 import { AssemblyAI, type Transcript } from "assemblyai";
 import { assemblyAITranscripts } from "~/server/db/assembly_ai_schema";
 import { db } from "~/server/db";
 import { eq } from "drizzle-orm";
+import OpenAI, { toFile } from "openai";
+import { openAITranscripts } from "~/server/db/open_ai_schema";
+import { zodResponseFormat } from "openai/helpers/zod";
+import { z } from "zod";
+import { splitAudio } from "./splitAudio";
+import fs from "fs";
+
+const responseSchema = z.object({
+  chapters: z.array(
+    z.object({
+      start_time: z.number(),
+      end_time: z.number(),
+      title: z.string(),
+      is_advertisement: z.boolean(),
+      confidence: z.number(),
+      ad_website: z.string().optional(),
+      ad_promo_code: z.string().optional(),
+    }),
+  ),
+});
+
+export type Chapter = z.infer<typeof responseSchema>["chapters"][number];
 
 export interface PodcastDirectory {
   collectionId: number;
@@ -74,32 +95,36 @@ export async function getPodcastEpisodes(
     });
 
     const feed = await parser.parseURL(feedUrl);
-    return feed.items.map(
-      (item: {
-        title?: string;
-        description?: string;
-        pubDate?: string;
-        duration?: string;
-        enclosure?: { url: string };
-        imageUrl?: { href: string };
-        guid?: string;
-      }) => ({
-        title: item.title ?? "",
-        description: item.description ?? "",
-        pubDate: item.pubDate ?? "",
-        duration: item.duration ?? "",
-        audioUrl: item.enclosure?.url ?? "",
-        imageUrl: item.imageUrl?.href,
-        guid: item.guid ?? "",
-      }),
-    );
+    return feed.items
+      .slice(0, 10)
+      .map(
+        (item: {
+          title?: string;
+          description?: string;
+          pubDate?: string;
+          duration?: string;
+          enclosure?: { url: string };
+          imageUrl?: { href: string };
+          guid?: string;
+        }) => ({
+          title: item.title ?? "",
+          description: item.description ?? "",
+          pubDate: item.pubDate ?? "",
+          duration: item.duration ?? "",
+          audioUrl: item.enclosure?.url ?? "",
+          imageUrl: item.imageUrl?.href,
+          guid: item.guid ?? "",
+        }),
+      );
   } catch (error) {
     console.error("Error fetching podcast episodes:", error);
     throw new Error("Failed to fetch podcast episodes");
   }
 }
 
-export async function genAudioTranscript(podcastEpisode: PodcastEpisode) {
+export async function genAudioTranscriptWithAssembly(
+  podcastEpisode: PodcastEpisode,
+): Promise<Transcript> {
   const transcriptFromDB = await db.query.assemblyAITranscripts.findFirst({
     where: eq(assemblyAITranscripts.guid, podcastEpisode.guid),
   });
@@ -129,7 +154,7 @@ export async function genAudioTranscript(podcastEpisode: PodcastEpisode) {
   return transcript;
 }
 
-export async function genAdsSections(transcript: Transcript) {
+export async function genAdsSectionsWithAssembly(transcript: Transcript) {
   const assemblyAiKey = process.env.ASSEMBLY_AI;
   if (!assemblyAiKey) {
     throw new Error("AssemblyAI API key not configured");
@@ -156,4 +181,183 @@ export async function genAdsSections(transcript: Transcript) {
   });
   console.log(response);
   return response;
+}
+
+export type EnrichedTranscript = OpenAI.Audio.Transcriptions.Transcription & {
+  chapters: { chapters: Chapter[] };
+};
+
+export async function genAudioTranscriptWithOpenAI(
+  podcastEpisode: PodcastEpisode,
+): Promise<EnrichedTranscript> {
+  const transcriptFromDB = await db.query.openAITranscripts.findFirst({
+    where: eq(openAITranscripts.guid, podcastEpisode.guid),
+  });
+  if (transcriptFromDB) {
+    return transcriptFromDB.transcript as EnrichedTranscript;
+  }
+  const openAIAPIKey = process.env.OPEN_AI;
+  if (!openAIAPIKey) {
+    throw new Error("OPEN AI API key not configured");
+  }
+  const openai = new OpenAI({ apiKey: openAIAPIKey });
+  const response = await fetch(podcastEpisode.audioUrl);
+  const arrayBuffer = await response.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+
+  const fileSizeInMB = (buffer.length / (1024 * 1024)).toFixed(2);
+  console.log("Audio file size:", fileSizeInMB, "MB");
+
+  let transcript;
+  if (Number(fileSizeInMB) > 24) {
+    console.log("File too large, splitting into chunks...");
+    const splitFiles = await splitAudio(podcastEpisode.audioUrl);
+
+    const combinedTranscript = {
+      text: "",
+      segments: [] as Array<{
+        start: number;
+        end: number;
+        text: string;
+        timestamps?: number[];
+        words?: Array<{ start: number; end: number; text: string }>;
+      }>,
+    };
+
+    let cumulativeDuration = 0;
+    // Process each chunk sequentially and combine results
+    for (let i = 0; i < splitFiles.length; i++) {
+      console.log(`Processing chunk ${i + 1}/${splitFiles.length}`);
+      console.log(`Cumulative duration before chunk:`, cumulativeDuration);
+
+      const cleanPath = splitFiles[i]?.split("\n")[0]?.trim();
+      if (!cleanPath) {
+        throw new Error(`Invalid path for chunk ${i + 1}`);
+      }
+      const fileBuffer = await fs.promises.readFile(cleanPath);
+      const file = await toFile(fileBuffer, `chunk${i + 1}.mp3`);
+
+      const chunkTranscript = await openai.audio.transcriptions.create({
+        file,
+        model: "whisper-1",
+        response_format: "verbose_json",
+        timestamp_granularities: ["segment"],
+        language: "en",
+        temperature: 0.1,
+      });
+
+      // Adjust timestamps for the current chunk using cumulative duration
+      const adjustedSegments =
+        chunkTranscript.segments?.map((segment) => ({
+          ...segment,
+          start: segment.start + cumulativeDuration,
+          end: segment.end + cumulativeDuration,
+          // Also adjust any other timestamp fields that might be present
+          timestamps: segment.timestamps?.map(
+            (ts: number) => ts + cumulativeDuration,
+          ),
+          words: segment.words?.map((word: { start: number; end: number }) => ({
+            ...word,
+            start: word.start + cumulativeDuration,
+            end: word.end + cumulativeDuration,
+          })),
+        })) ?? [];
+      // Update cumulative duration using the actual chunk duration
+      cumulativeDuration += Number(chunkTranscript.duration) || 0;
+
+      // Combine with previous chunks
+      combinedTranscript.text +=
+        (combinedTranscript.text ? " " : "") + (chunkTranscript.text || "");
+      combinedTranscript.segments = [
+        ...combinedTranscript.segments,
+        ...adjustedSegments,
+      ];
+    }
+
+    transcript = {
+      ...combinedTranscript,
+      language: "en",
+      duration: cumulativeDuration, // Make sure to use the final cumulative duration
+    };
+
+    console.log("Final transcript duration:", transcript.duration);
+    console.log("Final first segment:", transcript.segments?.[0]);
+    console.log(
+      "Final last segment:",
+      transcript.segments?.[transcript.segments?.length - 1],
+    );
+  } else {
+    const file = await toFile(buffer, "audio.mp3");
+    transcript = await openai.audio.transcriptions.create({
+      file,
+      model: "whisper-1",
+      response_format: "verbose_json",
+      timestamp_granularities: ["segment"],
+      language: "en",
+      temperature: 0.1,
+    });
+  }
+
+  // Add chapter analysis with GPT-4
+  const chapterAnalysis = await openai.chat.completions.create({
+    model: "gpt-4o-2024-08-06",
+    messages: [
+      {
+        role: "system",
+        content:
+          "You are an expert at analyzing podcast transcripts and identifying distinct chapters and advertisements. Use the provided segment timestamps as anchor points for chapter boundaries to ensure accuracy.",
+      },
+      {
+        role: "user",
+        content: `Analyze this podcast transcript and break it into logical chapters. Use ONLY the timestamps from the provided segments as start and end points for chapters.
+
+        Important rules:
+        1. ONLY use timestamps that exist in the transcript segments
+        2. Each chapter must start and end with an actual segment timestamp
+        3. Do not exceed the last segment's timestamp
+        4. Ensure chapters are sequential with no gaps
+        
+        Format your response as a JSON array of objects with this structure:
+        {
+          "start_time": number (in seconds, must match a segment timestamp),
+          "end_time": number (in seconds, must match a segment timestamp),
+          "title": string (brief chapter title),
+          "is_advertisement": boolean,
+          "confidence": number (0-1 indicating confidence in ad detection)
+          "ad_website": string (if it's an advertisement, the website of the ad),
+          "ad_promo_code": string (if it's an advertisement, the promo code of the ad),
+        }
+        
+        Available segment timestamps (in seconds):
+        ${transcript.segments?.map((s) => s.start).join(", ")}
+        
+        Transcript with segments:
+        ${transcript.segments?.map((s) => `[${s.start}s] ${s.text}`).join("\n")}`,
+      },
+    ],
+    response_format: zodResponseFormat(responseSchema, "chapters"),
+  });
+
+  // Combine the original transcript with the chapter analysis
+  const chapterContent = chapterAnalysis?.choices?.[0]?.message?.content;
+  if (!chapterContent) {
+    throw new Error("Chapter analysis content is undefined");
+  }
+
+  const enrichedTranscript: EnrichedTranscript = {
+    ...transcript,
+    chapters: responseSchema.parse(JSON.parse(chapterContent)),
+  };
+
+  // Update DB save operation to include chapter analysis
+  const ret = await db
+    .insert(openAITranscripts)
+    .values({
+      guid: podcastEpisode.guid,
+      transcript: enrichedTranscript,
+    })
+    .returning();
+
+  console.log(ret);
+  return enrichedTranscript;
 }
