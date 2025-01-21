@@ -26,21 +26,7 @@ export default function PodcastEpisodeCard({
   );
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [isChapterListOpen, setIsChapterListOpen] = useState(true);
   const [autoSkipAds, setAutoSkipAds] = useState(false);
-
-  const chapterColors = [
-    "#FF6B6B", // coral red
-    "#4ECDC4", // turquoise
-    "#45B7D1", // sky blue
-    "#96CEB4", // sage green
-    "#FFEEAD", // cream yellow
-    "#D4A5A5", // dusty rose
-    "#9B59B6", // purple
-    "#3498DB", // blue
-    "#E67E22", // orange
-    "#27AE60", // green
-  ];
 
   // Add effect to handle ad skipping
   useEffect(() => {
@@ -172,9 +158,9 @@ export default function PodcastEpisodeCard({
               {openAITranscript.chapters.chapters.map((chapter, idx) => {
                 const scaleFactor =
                   duration /
-                  (openAITranscript?.chapters?.chapters?.[
+                  openAITranscript.chapters.chapters[
                     openAITranscript.chapters.chapters.length - 1
-                  ]?.end_time ?? 1);
+                  ].end_time;
                 const startPercentage =
                   ((chapter.start_time * scaleFactor) / duration) * 100;
                 const endPercentage =
@@ -183,42 +169,49 @@ export default function PodcastEpisodeCard({
                 return (
                   <div
                     key={idx}
-                    className={`absolute top-0 h-full opacity-30 ${
+                    className={`absolute top-0 h-full ${
                       chapter.is_advertisement ? "bg-red-500" : "bg-gray-400"
-                    }`}
+                    } opacity-30`}
                     style={{
                       left: `${startPercentage}%`,
                       width: `${width}%`,
                     }}
+                    title={chapter.title}
                   />
                 );
               })}
             </>
           )}
-          {!useOpenAI && transcript?.chapters && (
-            <>
-              {transcript.chapters.map((chapter, idx) => {
-                const startPercentage =
-                  ((chapter.start * 0.001) / duration) * 100;
-                const endPercentage = ((chapter.end * 0.001) / duration) * 100;
-                const width = endPercentage - startPercentage;
-                return (
-                  <div
-                    key={idx}
-                    className={`absolute top-0 h-full opacity-30 ${
-                      chapter.gist?.toLowerCase().includes("sponsor")
-                        ? "bg-red-500"
-                        : "bg-gray-400"
-                    }`}
-                    style={{
-                      left: `${startPercentage}%`,
-                      width: `${width}%`,
-                    }}
-                  />
-                );
-              })}
-            </>
-          )}
+          {!useOpenAI &&
+            transcript?.chapters &&
+            transcript.chapters.length > 0 && (
+              <>
+                {transcript.chapters.map((chapter, idx) => {
+                  const startTime = (chapter.start ?? 0) / 1000;
+                  const endTime = (chapter.end ?? 0) / 1000;
+                  const startPercentage = (startTime / duration) * 100;
+                  const endPercentage = (endTime / duration) * 100;
+                  const width = endPercentage - startPercentage;
+
+                  return (
+                    <div
+                      key={idx}
+                      className={`absolute top-0 h-full ${
+                        chapter.gist?.toLowerCase().includes("sponsor") ||
+                        chapter.gist?.toLowerCase().includes("advertisement")
+                          ? "bg-red-500"
+                          : "bg-gray-400"
+                      } opacity-30`}
+                      style={{
+                        left: `${startPercentage}%`,
+                        width: `${width}%`,
+                      }}
+                      title={`${chapter.headline}: ${chapter.gist}`}
+                    />
+                  );
+                })}
+              </>
+            )}
 
           {/* Playback progress */}
           <div

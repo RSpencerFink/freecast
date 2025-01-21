@@ -187,6 +187,57 @@ export type EnrichedTranscript = OpenAI.Audio.Transcriptions.Transcription & {
   chapters: { chapters: Chapter[] };
 };
 
+async function analyzeChapters(
+  segments: Array<{ start: number; text: string }>,
+) {
+  const openai = new OpenAI({ apiKey: process.env.OPEN_AI });
+  const chapterAnalysis = await openai.chat.completions.create({
+    model: "gpt-4o-2024-08-06",
+    messages: [
+      {
+        role: "system",
+        content:
+          "You are an expert at analyzing podcast transcripts and identifying distinct chapters and advertisements. Use the provided segment timestamps as anchor points for chapter boundaries to ensure accuracy.",
+      },
+      {
+        role: "user",
+        content: `Analyze this podcast transcript and break it into logical chapters. Use ONLY the timestamps from the provided segments as start and end points for chapters.
+
+          Important rules:
+          1. ONLY use timestamps that exist in the transcript segments
+          2. Each chapter must start and end with an actual segment timestamp
+          3. Do not exceed the last segment's timestamp
+          4. Ensure chapters are sequential with no gaps
+          
+          Format your response as a JSON array of objects with this structure:
+          {
+            "start_time": number (in seconds, must match a segment timestamp),
+            "end_time": number (in seconds, must match a segment timestamp),
+            "title": string (brief chapter title),
+            "is_advertisement": boolean,
+            "confidence": number (0-1 indicating confidence in ad detection)
+            "ad_website": string (if it's an advertisement, the website of the ad),
+            "ad_promo_code": string (if it's an advertisement, the promo code of the ad),
+          }
+          
+          Available segment timestamps (in seconds):
+          ${segments.map((s) => s.start).join(", ")}
+          
+          Transcript with segments:
+          ${segments.map((s) => `[${s.start}s] ${s.text}`).join("\n")}`,
+      },
+    ],
+    response_format: zodResponseFormat(responseSchema, "chapters"),
+  });
+
+  const chapterContent = chapterAnalysis?.choices?.[0]?.message?.content;
+  if (!chapterContent) {
+    throw new Error("Chapter analysis content is undefined");
+  }
+
+  return responseSchema.parse(JSON.parse(chapterContent)).chapters;
+}
+
 export async function genAudioTranscriptWithOpenAI(
   podcastEpisode: PodcastEpisode,
 ): Promise<EnrichedTranscript> {
@@ -212,7 +263,7 @@ export async function genAudioTranscriptWithOpenAI(
   if (Number(fileSizeInMB) > 24) {
     console.log("File too large, splitting into chunks...");
     const splitFiles = await splitAudio(podcastEpisode.audioUrl);
-
+    console.log(`split into ${splitFiles.length} files`, splitFiles);
     const combinedTranscript = {
       text: "",
       segments: [] as Array<{
@@ -225,6 +276,8 @@ export async function genAudioTranscriptWithOpenAI(
     };
 
     let cumulativeDuration = 0;
+    const allChapters: Chapter[] = [];
+
     // Process each chunk sequentially and combine results
     for (let i = 0; i < splitFiles.length; i++) {
       console.log(`Processing chunk ${i + 1}/${splitFiles.length}`);
@@ -245,6 +298,12 @@ export async function genAudioTranscriptWithOpenAI(
         language: "en",
         temperature: 0.1,
       });
+
+      console.log(
+        `Chunk ${i + 1} duration:`,
+        chunkTranscript.duration,
+        "seconds",
+      );
 
       // Adjust timestamps for the current chunk using cumulative duration
       const adjustedSegments =
@@ -272,23 +331,21 @@ export async function genAudioTranscriptWithOpenAI(
         ...combinedTranscript.segments,
         ...adjustedSegments,
       ];
+
+      // Add chapter analysis for this chunk
+      const chunkChapters = await analyzeChapters(adjustedSegments);
+      allChapters.push(...chunkChapters);
     }
 
-    transcript = {
+    const enrichedTranscript: EnrichedTranscript = {
       ...combinedTranscript,
-      language: "en",
-      duration: cumulativeDuration, // Make sure to use the final cumulative duration
+      chapters: { chapters: allChapters },
     };
 
-    console.log("Final transcript duration:", transcript.duration);
-    console.log("Final first segment:", transcript.segments?.[0]);
-    console.log(
-      "Final last segment:",
-      transcript.segments?.[transcript.segments?.length - 1],
-    );
+    transcript = enrichedTranscript;
   } else {
     const file = await toFile(buffer, "audio.mp3");
-    transcript = await openai.audio.transcriptions.create({
+    const baseTranscript = await openai.audio.transcriptions.create({
       file,
       model: "whisper-1",
       response_format: "verbose_json",
@@ -296,68 +353,24 @@ export async function genAudioTranscriptWithOpenAI(
       language: "en",
       temperature: 0.1,
     });
+
+    // Add chapter analysis
+    const chapters = await analyzeChapters(baseTranscript.segments ?? []);
+    transcript = {
+      ...baseTranscript,
+      chapters: { chapters },
+    } as EnrichedTranscript;
   }
-
-  // Add chapter analysis with GPT-4
-  const chapterAnalysis = await openai.chat.completions.create({
-    model: "gpt-4o-2024-08-06",
-    messages: [
-      {
-        role: "system",
-        content:
-          "You are an expert at analyzing podcast transcripts and identifying distinct chapters and advertisements. Use the provided segment timestamps as anchor points for chapter boundaries to ensure accuracy.",
-      },
-      {
-        role: "user",
-        content: `Analyze this podcast transcript and break it into logical chapters. Use ONLY the timestamps from the provided segments as start and end points for chapters.
-
-        Important rules:
-        1. ONLY use timestamps that exist in the transcript segments
-        2. Each chapter must start and end with an actual segment timestamp
-        3. Do not exceed the last segment's timestamp
-        4. Ensure chapters are sequential with no gaps
-        
-        Format your response as a JSON array of objects with this structure:
-        {
-          "start_time": number (in seconds, must match a segment timestamp),
-          "end_time": number (in seconds, must match a segment timestamp),
-          "title": string (brief chapter title),
-          "is_advertisement": boolean,
-          "confidence": number (0-1 indicating confidence in ad detection)
-          "ad_website": string (if it's an advertisement, the website of the ad),
-          "ad_promo_code": string (if it's an advertisement, the promo code of the ad),
-        }
-        
-        Available segment timestamps (in seconds):
-        ${transcript.segments?.map((s) => s.start).join(", ")}
-        
-        Transcript with segments:
-        ${transcript.segments?.map((s) => `[${s.start}s] ${s.text}`).join("\n")}`,
-      },
-    ],
-    response_format: zodResponseFormat(responseSchema, "chapters"),
-  });
-
-  // Combine the original transcript with the chapter analysis
-  const chapterContent = chapterAnalysis?.choices?.[0]?.message?.content;
-  if (!chapterContent) {
-    throw new Error("Chapter analysis content is undefined");
-  }
-
-  const enrichedTranscript: EnrichedTranscript = {
-    ...transcript,
-    chapters: responseSchema.parse(JSON.parse(chapterContent)),
-  };
 
   // Update DB save operation to include chapter analysis
   const ret = await db
     .insert(openAITranscripts)
     .values({
       guid: podcastEpisode.guid,
-      transcript: enrichedTranscript,
+      transcript: transcript,
     })
     .returning();
 
   console.log(ret);
-  return enrichedTranscript;
+  return transcript;
 }

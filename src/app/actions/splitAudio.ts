@@ -19,29 +19,32 @@ export async function splitAudio(inputFilePath: string): Promise<string[]> {
   ];
 
   // Find the first working Python path
-  let pythonPath =
+  const pythonPath =
     pythonPaths.find((path) => {
       try {
         return require("fs").existsSync(path);
       } catch {
         return false;
       }
-    }) || "python3"; // fallback to python3
+    }) ?? "python3"; // fallback to python3
 
   return new Promise((resolve, reject) => {
     const pythonProcess = spawn(pythonPath, [scriptPath, inputFilePath]);
-    const outputFiles: string[] = [];
+    const outputFiles = new Set<string>(); // Use Set to prevent duplicates
+    let errorOutput = "";
+
     pythonProcess.stdout.on("data", (data: Buffer) => {
-      const output: string = data.toString();
-      if (output.startsWith("Created ")) {
-        outputFiles.push(output.replace("Created ", "").trim());
-      }
+      const filenames = data.toString().trim().split("\n");
+      filenames
+        .filter(Boolean)
+        .forEach((filename) => outputFiles.add(filename));
     });
+
     pythonProcess.stderr.on("data", (data: Buffer) => {
       const errorMessage = data.toString();
+      errorOutput += errorMessage;
       console.error(`Python Error: ${errorMessage}`);
 
-      // Check for specific error cases
       if (errorMessage.includes("No module named 'pydub'")) {
         reject(
           new Error(
@@ -54,10 +57,15 @@ export async function splitAudio(inputFilePath: string): Promise<string[]> {
 
     pythonProcess.on("close", (code) => {
       if (code !== 0) {
-        reject(new Error(`Python process exited with code ${code}`));
+        // Extract the most relevant error message
+        const errorMatch = errorOutput.match(/Exception: (.+?)(\n|$)/);
+        const friendlyError = errorMatch
+          ? errorMatch[1]
+          : `Python process exited with code ${code}`;
+        reject(new Error(friendlyError));
         return;
       }
-      resolve(outputFiles);
+      resolve(Array.from(outputFiles)); // Convert Set back to array
     });
   });
 }
