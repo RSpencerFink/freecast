@@ -8,7 +8,7 @@ Freecast is a modern podcast discovery and analysis platform that allows users t
 - **Episode Browsing**: View and browse recent episodes from podcasts
 - **Transcript Generation**: Generate transcripts of podcast episodes using both AssemblyAI and OpenAI
 - **Chapter Analysis**: Automatically identify and segment podcast chapters
-- **Advertisement Detection**: Identify advertising segments within podcasts
+- **Advertisement Detection**: Identify advertising segments within podcasts and automatically skip them in playback
 - **Audio Processing**: Split audio for more efficient processing
 
 ## Technologies
