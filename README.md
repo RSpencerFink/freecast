@@ -1,29 +1,67 @@
-# Create T3 App
+# Freecast
 
-This is a [T3 Stack](https://create.t3.gg/) project bootstrapped with `create-t3-app`.
+Freecast is a modern podcast discovery and analysis platform that allows users to search, explore, and extract insights from podcast content.
 
-## What's next? How do I make an app with this?
+## Features
 
-We try to keep this project as simple as possible, so you can start with just the scaffolding we set up for you, and add additional things later when they become necessary.
+- **Podcast Discovery**: Search the iTunes/Apple Podcasts directory to find podcasts
+- **Episode Browsing**: View and browse recent episodes from podcasts
+- **Transcript Generation**: Generate transcripts of podcast episodes using both AssemblyAI and OpenAI
+- **Chapter Analysis**: Automatically identify and segment podcast chapters
+- **Advertisement Detection**: Identify advertising segments within podcasts
+- **Audio Processing**: Split audio for more efficient processing
 
-If you are not familiar with the different technologies used in this project, please refer to the respective docs. If you still are in the wind, please join our [Discord](https://t3.gg/discord) and ask for help.
+## Technologies
 
-- [Next.js](https://nextjs.org)
-- [NextAuth.js](https://next-auth.js.org)
-- [Prisma](https://prisma.io)
-- [Drizzle](https://orm.drizzle.team)
-- [Tailwind CSS](https://tailwindcss.com)
-- [tRPC](https://trpc.io)
+### Frontend
 
-## Learn More
+- **Next.js 15**: React framework with server-side rendering
+- **React 18**: UI component library
+- **Tailwind CSS**: Utility-first CSS framework for styling
+- **TypeScript**: Typed JavaScript for better developer experience
 
-To learn more about the [T3 Stack](https://create.t3.gg/), take a look at the following resources:
+### Backend
 
-- [Documentation](https://create.t3.gg/)
-- [Learn the T3 Stack](https://create.t3.gg/en/faq#what-learning-resources-are-currently-available) — Check out these awesome tutorials
+- **Next.js Server Actions**: Server-side functions for data fetching and processing
+- **Drizzle ORM**: TypeScript ORM for database interactions
+- **PostgreSQL**: Relational database for storing podcast data and transcripts
+- **Python Integration**: For specialized audio processing tasks
 
-You can check out the [create-t3-app GitHub repository](https://github.com/t3-oss/create-t3-app) — your feedback and contributions are welcome!
+### External APIs
 
-## How do I deploy this?
+- **AssemblyAI**: AI-powered audio transcription and chapter detection
+- **OpenAI**: Natural language processing for transcript analysis
+- **iTunes Search API**: For podcast discovery and metadata
 
-Follow our deployment guides for [Vercel](https://create.t3.gg/en/deployment/vercel), [Netlify](https://create.t3.gg/en/deployment/netlify) and [Docker](https://create.t3.gg/en/deployment/docker) for more information.
+### Development Tools
+
+- **ESLint & Prettier**: Code quality and formatting
+- **Drizzle Kit**: Database migration and management tools
+- **TypeScript**: Static type checking
+
+## Getting Started
+
+1. Clone the repository
+2. Install dependencies: `npm install`
+3. Set up environment variables (see `.env.example`)
+4. Start the development server: `npm run dev`
+5. Optional: Run the database setup script: `./start-database.sh`
+
+## Environment Variables
+
+Create a `.env` file based on the `.env.example` template. Required variables include:
+
+- Database connection strings
+- API keys for AssemblyAI and OpenAI
+
+## Development
+
+- **Database migrations**: `npm run db:migrate`
+- **Database schema updates**: `npm run db:push`
+- **Linting**: `npm run lint`
+- **Type checking**: `npm run typecheck`
+- **Formatting**: `npm run format:write`
+
+## License
+
+MIT
