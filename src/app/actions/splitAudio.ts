@@ -1,6 +1,6 @@
 import { spawn } from "child_process";
 import path from "path";
-
+import fs from "fs";
 export async function splitAudio(inputFilePath: string): Promise<string[]> {
   const scriptPath = path.join(
     process.cwd(),
@@ -22,7 +22,7 @@ export async function splitAudio(inputFilePath: string): Promise<string[]> {
   const pythonPath =
     pythonPaths.find((path) => {
       try {
-        return require("fs").existsSync(path);
+        return fs.existsSync(path);
       } catch {
         return false;
       }
@@ -58,7 +58,7 @@ export async function splitAudio(inputFilePath: string): Promise<string[]> {
     pythonProcess.on("close", (code) => {
       if (code !== 0) {
         // Extract the most relevant error message
-        const errorMatch = errorOutput.match(/Exception: (.+?)(\n|$)/);
+        const errorMatch = /Exception: (.+?)(\n|$)/.exec(errorOutput);
         const friendlyError = errorMatch
           ? errorMatch[1]
           : `Python process exited with code ${code}`;

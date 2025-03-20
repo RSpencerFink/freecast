@@ -1,6 +1,6 @@
 # Freecast
 
-Freecast is a modern podcast discovery and analysis platform that allows users to search, explore, and extract insights from podcast content.
+Freecast is a prototype modern podcast discovery and analysis platform that allows users to search, explore, and extract insights from podcast content.
 
 ## Features
 

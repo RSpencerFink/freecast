@@ -158,9 +158,9 @@ export default function PodcastEpisodeCard({
               {openAITranscript.chapters.chapters.map((chapter, idx) => {
                 const scaleFactor =
                   duration /
-                  openAITranscript.chapters.chapters[
+                  (openAITranscript.chapters.chapters[
                     openAITranscript.chapters.chapters.length - 1
-                  ].end_time;
+                  ]?.end_time ?? 1);
                 const startPercentage =
                   ((chapter.start_time * scaleFactor) / duration) * 100;
                 const endPercentage =

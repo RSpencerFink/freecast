@@ -187,6 +187,14 @@ export type EnrichedTranscript = OpenAI.Audio.Transcriptions.Transcription & {
   chapters: { chapters: Chapter[] };
 };
 
+interface ExtendedTranscriptionSegment {
+  start: number;
+  end: number;
+  text: string;
+  timestamps?: number[];
+  words?: Array<{ start: number; end: number; text: string }>;
+}
+
 async function analyzeChapters(
   segments: Array<{ start: number; text: string }>,
 ) {
@@ -307,20 +315,29 @@ export async function genAudioTranscriptWithOpenAI(
 
       // Adjust timestamps for the current chunk using cumulative duration
       const adjustedSegments =
-        chunkTranscript.segments?.map((segment) => ({
-          ...segment,
-          start: segment.start + cumulativeDuration,
-          end: segment.end + cumulativeDuration,
-          // Also adjust any other timestamp fields that might be present
-          timestamps: segment.timestamps?.map(
-            (ts: number) => ts + cumulativeDuration,
-          ),
-          words: segment.words?.map((word: { start: number; end: number }) => ({
-            ...word,
-            start: word.start + cumulativeDuration,
-            end: word.end + cumulativeDuration,
-          })),
-        })) ?? [];
+        chunkTranscript.segments?.map((segment) => {
+          // Cast the segment to our extended type that includes optional properties
+          const extendedSegment =
+            segment as unknown as ExtendedTranscriptionSegment;
+          return {
+            ...segment,
+            start: segment.start + cumulativeDuration,
+            end: segment.end + cumulativeDuration,
+            // Only include these properties if they exist in the original segment
+            ...(extendedSegment.timestamps && {
+              timestamps: extendedSegment.timestamps.map(
+                (ts) => ts + cumulativeDuration,
+              ),
+            }),
+            ...(extendedSegment.words && {
+              words: extendedSegment.words.map((word) => ({
+                ...word,
+                start: word.start + cumulativeDuration,
+                end: word.end + cumulativeDuration,
+              })),
+            }),
+          };
+        }) ?? [];
       // Update cumulative duration using the actual chunk duration
       cumulativeDuration += Number(chunkTranscript.duration) || 0;
 
